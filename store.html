@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Rostore</title>
+    <style>
+        :root { --fdroid: #009688; --bg: #f5f5f5; --card: #ffffff; }
+        body { font-family: 'Roboto', sans-serif; margin: 0; background: var(--bg); color: #333; }
+        
+        /* Header style F-Droid */
+        header { background: var(--fdroid); color: white; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); position: sticky; top: 0; z-index: 10; }
+        h1 { margin: 0; font-size: 1.2rem; }
+
+        /* Liste des Apps */
+        .app-list { padding: 8px; }
+        .app-card { 
+            background: var(--card); margin-bottom: 4px; display: flex; align-items: center; 
+            padding: 12px; border-radius: 2px; border-bottom: 1px solid #ddd;
+        }
+        .app-icon { width: 48px; height: 48px; border-radius: 4px; margin-right: 16px; background: #eee; }
+        .app-details { flex-grow: 1; }
+        .app-title { font-weight: bold; margin: 0; color: #222; }
+        .app-info { font-size: 0.85rem; color: #757575; margin: 2px 0; }
+        .rating { color: #fbc02d; font-size: 0.8rem; font-weight: bold; }
+
+        /* Bouton Télécharger */
+        .dl-btn { color: var(--fdroid); text-decoration: none; padding: 10px; font-size: 1.4rem; }
+
+        /* Formulaire de publication (Bottom Sheet) */
+        #publish-form { 
+            position: fixed; bottom: 0; left: 0; right: 0; background: white; 
+            padding: 20px; box-shadow: 0 -2px 10px rgba(0,0,0,0.3); 
+            display: none; border-radius: 16px 16px 0 0; z-index: 20;
+        }
+        input, textarea { width: 100%; margin-bottom: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .btn-send { background: var(--fdroid); color: white; border: none; padding: 12px; width: 100%; border-radius: 4px; font-weight: bold; }
+        
+        .fab { position: fixed; bottom: 20px; right: 20px; background: #ff4081; color: white; width: 56px; height: 56px; border-radius: 50%; border: none; font-size: 24px; box-shadow: 0 3px 6px rgba(0,0,0,0.3); }
+    </style>
+</head>
+<body>
+
+<header><h1>E-Rostore</h1></header>
+
+<div class="app-list" id="appList">
+    <p style="text-align:center; padding:20px;">Chargement du store...</p>
+</div>
+
+<button class="fab" onclick="document.getElementById('publish-form').style.display='block'">+</button>
+
+<div id="publish-form">
+    <h3>Publier une application</h3>
+    <input type="text" id="appTitle" placeholder="Nom de l'application">
+    <textarea id="appDesc" placeholder="Description courte"></textarea>
+    <label>Fichier APK :</label> <input type="file" id="apkFile" accept=".apk">
+    <label>Icône :</label> <input type="file" id="iconFile" accept="image/*">
+    <button class="btn-send" id="btnUpload">PUBLIER</button>
+    <button onclick="document.getElementById('publish-form').style.display='none'" style="width:100%; background:none; border:none; margin-top:10px; color:#757575;">ANNULER</button>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore.js";
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-storage.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyBbjKK7AoIoiUGFSMDdLdXpfcSkTuyZREI",
+        authDomain: "e-rostore.firebaseapp.com",
+        projectId: "e-rostore",
+        storageBucket: "e-rostore.firebasestorage.app",
+        messagingSenderId: "940168004062",
+        appId: "1:940168004062:web:e2f265f115c244eea51d4f"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    // 1. LIRE LES APPS (Mode Temps Réel)
+    const q = query(collection(db, "apps"), orderBy("createdAt", "desc"));
+    onSnapshot(q, (snapshot) => {
+        const list = document.getElementById('appList');
+        list.innerHTML = "";
+        snapshot.forEach((doc) => {
+            const data = doc.data();
+            const rating = data.voteCount > 0 ? (data.voteSum / data.voteCount).toFixed(1) : "0.0";
+            list.innerHTML += `
+                <div class="app-card">
+                    <img src="${data.iconUrl}" class="app-icon">
+                    <div class="app-details">
+                        <p class="app-title">${data.title}</p>
+                        <p class="app-info">${data.desc}</p>
+                        <div class="rating">★ ${rating} (${data.voteCount || 0} avis)</div>
+                    </div>
+                    <a href="${data.apkUrl}" class="dl-btn">📥</a>
+                </div>`;
+        });
+    });
+
+    // 2. PUBLIER UNE APP
+    document.getElementById('btnUpload').onclick = async () => {
+        const title = document.getElementById('appTitle').value;
+        const desc = document.getElementById('appDesc').value;
+        const apkFile = document.getElementById('apkFile').files[0];
+        const iconFile = document.getElementById('iconFile').files[0];
+
+        if(!apkFile || !iconFile || !title) return alert("Remplis tout !");
+
+        document.getElementById('btnUpload').innerText = "Téléversement...";
+
+        // Upload Fichiers
+        const apkRef = ref(storage, 'apks/' + apkFile.name);
+        const iconRef = ref(storage, 'icons/' + iconFile.name);
+
+        await uploadBytes(apkRef, apkFile);
+        await uploadBytes(iconRef, iconFile);
+
+        const apkUrl = await getDownloadURL(apkRef);
+        const iconUrl = await getDownloadURL(iconRef);
+
+        // Enregistrement Firestore
+        await addDoc(collection(db, "apps"), {
+            title, desc, apkUrl, iconUrl,
+            voteSum: 0, voteCount: 0,
+            createdAt: new Date()
+        });
+
+        alert("Application publiée");
+        document.getElementById('publish-form').style.display = 'none';
+        document.getElementById('btnUpload').innerText = "PUBLIER";
+    };
+</script>
+</body>
+</html>
